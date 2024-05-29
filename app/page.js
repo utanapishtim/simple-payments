@@ -1,113 +1,249 @@
-import Image from "next/image";
+'use client'
+import React, { useEffect, useState, useRef } from 'react'
+import b4a from 'b4a'
+import FramedStream from "framed-stream"
+import Protomux from "protomux"
+import RPC from 'protomux-rpc'
+import cenc from 'compact-encoding'
+import clsx from 'clsx'
+import WebSocketStream from '@/lib/websocket-stream.mjs'
+import {
+  ArrowDownOnSquareIcon,
+  ArrowUpOnSquareIcon,
+  CurrencyDollarIcon,
+  ArrowPathRoundedSquareIcon
+} from '@heroicons/react/24/solid'
+
+import Modal from '@/components/modal'
+import RefreshModalContents from '@/components/refresh-modal-contents'
+import FundModalContents from '@/components/fund-modal-contents'
+import ReceiveModalContents from '@/components/receive-modal-contents'
+import SendModalContents from '@/components/send-modal-contents'
+
+import { keyPair } from '@/app/constants'
 
 export default function Home() {
+  const [balance, setBalance] = useState(0)
+  const [clipboard, setClipboard] = useState(false)
+  const [error, setError] = useState(null)
+
+  const rpc = useRef(null)
+
+  const [ui, setUI] = useState({ 
+    sending: false, 
+    receiving: false, 
+    funding: false, 
+    refreshing: false 
+  })
+
+  function handleError (err) {
+    setError(err.message)
+    setTimeout(() => setError(null), 5000)
+  }
+
+  useEffect(() => {
+    navigator.clipboard.readText()
+      .then((text) => setClipboard(text && text === b4a.toString(keyPair.publicKey, 'hex')))
+      .catch(noop)
+  }, [ui.receiving])
+
+  useEffect(() => {
+    // TODO: network error handling
+    const ws = new WebSocket('ws://localhost:3000/api/')
+    const wss = new WebSocketStream(ws)
+    const framed = new FramedStream(wss)
+    const mux = Protomux.from(framed)
+    const _rpc = new RPC(mux)
+
+    rpc.current = _rpc
+
+    _rpc.request('init', keyPair.publicKey, { 
+      requestEncoding: cenc.fixed32, // how we're encoding the request, in this case as a fixed32 buffer
+      responseEncoding: cenc.json    // how we're encoding the response, in this case as json
+    })
+      .then(({ balance }) => setBalance(balance ?? 0))
+      .catch((err) => handleError(err)) // TODO: display error
+
+    _rpc.respond('balance', { // we're setting a listener on the client
+      requestEncoding: cenc.json, // we're expecting json from the server
+      responseEncoding: cenc.none // we'll send nothing back in return
+    }, ({ balance: nextBalance }) => setBalance(nextBalance ?? balance))
+  }, [])
+
+  const sending = toggles(ui, setUI, 'sending')
+  const receiving = toggles(ui, setUI, 'receiving')
+  const funding = toggles(ui, setUI, 'funding')
+  const refreshing = toggles(ui, setUI, 'refreshing')
+
+  const fund = function (amount, isFunding, setFunding) {
+    return async function fund (event) {
+      event.preventDefault()
+      if (isFunding) return
+      setFunding(true)
+      const to = b4a.toString(keyPair.publicKey, 'hex')
+      
+      try {
+        const { balance } = await rpc.current.request('fund', { to, amount }, {
+          requestEncoding: cenc.json,
+          responseEncoding: cenc.json
+        })
+        setBalance(balance)
+      } catch (err) {
+        handleError(err)
+      } finally {
+        setFunding(false)
+        funding.close()
+      }
+    }
+  }
+
+  function send (amount, to, isSending, setIsSending) {
+    return async function (event) {
+      event.preventDefault()
+      if (isSending) return
+      setIsSending(true)
+      const from = b4a.toString(keyPair.publicKey, 'hex')
+      try {
+        const { balance: nextBalance } = await rpc.current.request('send', { from, to, amount }, {
+          requestEncoding: cenc.json,
+          responseEncoding: cenc.json
+        })
+        setBalance(nextBalance ?? balance)
+      } catch (err) {
+        handleError(err)
+      } finally {
+        setIsSending(false)
+        sending.close()
+      }
+    }
+  }
+
+  async function refresh (event) {
+    event.preventDefault()
+    const id = b4a.toString(keyPair.publicKey, 'hex')
+    try {
+      refreshing.open()
+      await new Promise((res) => setTimeout(res, 250)) // make it look a lil slow
+      const { balance: nextBalance } = await rpc.current.request('refresh', { id }, {
+        requestEncoding: cenc.json,
+        responseEncoding: cenc.json
+      })
+      setBalance(nextBalance ?? balance)
+    } catch (err) {
+      handleError(err)
+    } finally {
+      refreshing.close()
+    }
+  }
+
   return (
-    <main className="flex min-h-screen flex-col items-center justify-between p-24">
-      <div className="z-10 max-w-5xl w-full items-center justify-between font-mono text-sm lg:flex">
-        <p className="fixed left-0 top-0 flex w-full justify-center border-b border-gray-300 bg-gradient-to-b from-zinc-200 pb-6 pt-8 backdrop-blur-2xl dark:border-neutral-800 dark:bg-zinc-800/30 dark:from-inherit lg:static lg:w-auto  lg:rounded-xl lg:border lg:bg-gray-200 lg:p-4 lg:dark:bg-zinc-800/30">
-          Get started by editing&nbsp;
-          <code className="font-mono font-bold">app/page.js</code>
-        </p>
-        <div className="fixed bottom-0 left-0 flex h-48 w-full items-end justify-center bg-gradient-to-t from-white via-white dark:from-black dark:via-black lg:static lg:h-auto lg:w-auto lg:bg-none">
-          <a
-            className="pointer-events-none flex place-items-center gap-2 p-8 lg:pointer-events-auto lg:p-0"
-            href="https://vercel.com?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            By{" "}
-            <Image
-              src="/vercel.svg"
-              alt="Vercel Logo"
-              className="dark:invert"
-              width={100}
-              height={24}
-              priority
-            />
-          </a>
+    <main className={clsx(
+      "relative flex min-h-screen flex-col items-center justify-center bg-black text-white",
+    )}>
+        <div className="fixed top-0 left-0 right-0 min-w-screen">
+          <div className={(error ? '' : 'hidden w-full')}>
+            <p className="text-red-500 text-sm text-center p-4">{error}</p>
+          </div>
         </div>
-      </div>
-
-      <div className="relative flex place-items-center before:absolute before:h-[300px] before:w-full sm:before:w-[480px] before:-translate-x-1/2 before:rounded-full before:bg-gradient-radial before:from-white before:to-transparent before:blur-2xl before:content-[''] after:absolute after:-z-20 after:h-[180px] after:w-full sm:after:w-[240px] after:translate-x-1/3 after:bg-gradient-conic after:from-sky-200 after:via-blue-200 after:blur-2xl after:content-[''] before:dark:bg-gradient-to-br before:dark:from-transparent before:dark:to-blue-700 before:dark:opacity-10 after:dark:from-sky-900 after:dark:via-[#0141ff] after:dark:opacity-40 before:lg:h-[360px] z-[-1]">
-        <Image
-          className="relative dark:drop-shadow-[0_0_0.3rem_#ffffff70] dark:invert"
-          src="/next.svg"
-          alt="Next.js Logo"
-          width={180}
-          height={37}
-          priority
-        />
-      </div>
-
-      <div className="mb-32 grid text-center lg:max-w-5xl lg:w-full lg:mb-0 lg:grid-cols-4 lg:text-left">
-        <a
-          href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Docs{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Find in-depth information about Next.js features and API.
-          </p>
-        </a>
-
-        <a
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800 hover:dark:bg-opacity-30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Learn{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Learn about Next.js in an interactive course with&nbsp;quizzes!
-          </p>
-        </a>
-
-        <a
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Templates{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Explore starter templates for Next.js.
-          </p>
-        </a>
-
-        <a
-          href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Deploy{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50 text-balance`}>
-            Instantly deploy your Next.js site to a shareable URL with Vercel.
-          </p>
-        </a>
-      </div>
+        <div className="relative w-full text-center">
+          <h1 className="text-md font-semibold capitalize">balance</h1>
+          <h2 className="text-5xl py-4">{balance}</h2>
+          <h3 className="text-xs font-semibold capitalize">satoshi tokens</h3>
+        </div>
+        <div className={clsx(
+          "relative mt-16 px-4 flex flex-col items-center justify-center w-full gap-4",
+          "sm:gap-8"
+        )}>
+          <div className={clsx(
+            "flex flex-row items center justify-center w-full gap-4",
+            "sm:gap-8"
+          )}>
+            {/* sending */}
+            <div 
+              className={clsx(
+                "border border-white/20 cursor-pointer bg-white/10 h-36 w-36 rounded-xl p-4",
+                "hover:bg-white/20 hover:border-white/30"
+              )} 
+              onClick={sending.open}
+            >
+              <h1 className="font-semibold flex flex-row items-center"><ArrowUpOnSquareIcon className="rotate-45 size-4 mr-2 stroke-2"/>Send</h1>
+              <Modal 
+                title={<h1 className="font-semibold flex flex-row items-center"><ArrowUpOnSquareIcon className="rotate-45 size-4 mr-2 stroke-2"/>Send</h1>}
+                isOpen={ui.sending}
+                onClose={sending.close}
+              >
+                <SendModalContents close={sending.close} send={send} max={balance}/>
+              </Modal>
+            </div>
+            {/* receiving */}
+            <div 
+              className={clsx(
+                "relative border border-white/20 cursor-pointer bg-white/10 h-36 w-36 rounded-xl p-4",
+                "hover:bg-white/20 hover:border-white/30"
+              )} 
+              onClick={receiving.open}
+            >
+              <h1 className="relative font-semibold flex flex-row items-center"><ArrowDownOnSquareIcon className="rotate-[225deg] size-4 mr-2 stroke-2"/>Receive</h1>
+              <Modal 
+                title={<h1 className="font-semibold flex flex-row items-center"><ArrowDownOnSquareIcon className="rotate-[225deg] size-4 mr-2 stroke-2"/>Receive</h1>}
+                isOpen={ui.receiving}
+                onClose={receiving.close}
+              >
+                <ReceiveModalContents close={receiving.close} />
+              </Modal>
+              <div className="absolute w-full top-0 left-0 right-0 inset-0 w-full flex flex-col items-start justify-end">
+                {clipboard ? <p className="text-xs pl-4 py-3 text-green-400 font-semibold">account id copied!</p> : <></>}
+              </div>
+            </div>
+          </div>
+          <div className={clsx(
+            "flex flex-row items center justify-center w-full gap-4",
+            "sm:gap-8"
+          )}>
+            {/* fund */}
+            <div 
+              className={clsx(
+                "border border-white/20 cursor-pointer bg-white/10 h-36 w-36 rounded-xl p-4",
+                "hover:bg-white/20 hover:border-white/30"
+              )} 
+              onClick={funding.open}
+            >             
+              <h1 className="font-semibold flex flex-row items-center"><CurrencyDollarIcon className="size-4 mr-2 stroke-2"/>Fund</h1>
+              <Modal 
+                title={<h1 className="font-semibold flex flex-row items-center"><CurrencyDollarIcon className="size-4 mr-2 stroke-2"/>Fund</h1>}
+                isOpen={ui.funding}
+                onClose={funding.close}
+              >
+                <FundModalContents close={funding.close} fund={fund} />
+              </Modal>
+            </div>
+            {/* refresh */}
+            <div 
+              className={clsx(
+                "border border-white/20 cursor-pointer bg-white/10 h-36 w-36 rounded-xl p-4",
+                "hover:bg-white/20 hover:border-white/30"
+              )} 
+              onClick={refresh}
+            >             
+              <h1 className="font-semibold flex flex-row items-center"><ArrowPathRoundedSquareIcon className="size-4 mr-2 stroke-2"/> Refresh</h1>
+              <Modal 
+                title={<h1 className="font-semibold flex flex-row items-center"><ArrowPathRoundedSquareIcon className="size-4 mr-2 stroke-2"/> Refresh</h1>}
+                isOpen={ui.refreshing}
+                onClose={refreshing.close}
+              >
+                <RefreshModalContents />
+              </Modal>
+            </div>
+          </div>
+        </div>
     </main>
   );
 }
+
+function toggles (state, set, key) {
+  const open = () => set({ ...state, [key]: true })
+  const close = () => set({ ...state, [key]: false }) 
+  return { open, close }
+}
+
+function noop () {}
