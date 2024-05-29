@@ -1,36 +1,45 @@
-This is a [Next.js](https://nextjs.org/) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
+# Simple Payments
+A litle app for sending / receiving payments using a ledger on supabase
 
 ## Getting Started
 
-First, run the development server:
+### 0. Setup this Repo
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+Clone this project, `cd` into the correct directory, and run `npm i`.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 1. Create a new Supabase Project
 
-You can start editing the page by modifying `app/page.js`. The page auto-updates as you edit the file.
+Use this [link](https://supabase.com/dashboard/new?plan=free&kind=PERSONAL&size=1&spend_cap=true)
 
-This project uses [`next/font`](https://nextjs.org/docs/basic-features/font-optimization) to automatically optimize and load Inter, a custom Google Font.
+### 2. Setup Connection URLs
 
-## Learn More
+Navigate to [Database Settings](https://supabase.com/dashboard/project/_/settings/database) and copy the session and transaction URLs from the `Connection String` section and add them to the `.env` file. Make sure to replace the placeholder password with your own.
 
-To learn more about Next.js, take a look at the following resources:
+### 3. Setup the Database
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+`npm run migration/gen`
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js/) - your feedback and contributions are welcome!
+and then:
 
-## Deploy on Vercel
+`npm run migration/exe`
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### 4. Start the Development Server
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/deployment) for more details.
+`npm run dev`
+
+### 5. Open two tabs at `http://localhost:3000`
+
+### Tab 1
+- click the `fund` button to fund your account
+
+### Tab 2
+- click the `receive` button
+- copy the account id
+
+### Tab 1
+- click the `send` button
+- pase the account id in to the `recipient` field
+- enter the amount of tokens to transfer
+- hit `send`
+
+You should see the balances update!
